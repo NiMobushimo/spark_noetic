@@ -27,8 +27,6 @@ Separator="———————————————————————
 CAMERATYPE="d435"
 LIDARTYPE="ydlidar_g6"
 ARMTYPE="uarm"
-XVFB_PID=""
-X11VNC_PID=""
 DISPLAY_NUM=":0"
 
 # =================================================
@@ -52,14 +50,14 @@ cleanup() {
     printf "${Info} 正在停止所有 ROS 节点...\n"
     run busybox killall -9 rosmaster rosout > /dev/null 2>&1
     printf "${Info} 正在关闭虚拟屏幕 (Xvfb) 和 X11VNC 服务...\n"
-    if [ -n "$XVFB_PID" ]; then
-        kill "$XVFB_PID" > /dev/null 2>&1
-        printf "${Info} Xvfb (PID: %s) 已关闭。\n" "$XVFB_PID"
-    fi
-    if [ -n "$X11VNC_PID" ]; then
-        kill "$X11VNC_PID" > /dev/null 2>&1
-        printf "${Info} X11VNC (PID: %s) 已关闭。\n" "$X11VNC_PID"
-    fi
+    # startxvfb 是封装脚本，$! 拿到的是子 shell PID 而非真实 Xvfb 进程。
+    # 改用 killall 按进程名安全杀死，确保彻底清理。
+    run busybox killall -9 Xvfb > /dev/null 2>&1 && \
+        printf "${Info} Xvfb 已关闭。\n" || \
+        printf "${Tip} Xvfb 未在运行或已提前退出。\n"
+    run busybox killall -9 x11vnc > /dev/null 2>&1 && \
+        printf "${Info} X11VNC 已关闭。\n" || \
+        printf "${Tip} X11VNC 未在运行或已提前退出。\n"
     printf "${Info} 清理完成，脚本已退出。\n"
     # stty 属于 busybox，OpenHarmony toybox 中不可用，忽略错误
     run busybox stty sane 2>/dev/null || true
@@ -126,10 +124,11 @@ start_virtual_screen() {
         printf "${Tip} 检测到 Xvfb 已在运行，跳过启动。\n"
     else
         printf "${Info} 正在启动 X Virtual Framebuffer (Xvfb)...\n"
-        run startxvfb -screen 0 1400x1000x24 &
-        XVFB_PID=$!
+        # startxvfb 是封装脚本，内部用 run Xvfb 启动。
+        # 不保存 PID，cleanup 时用 killall 按进程名杀死。
+        run startxvfb &
         sleep 2
-        printf "${Info} Xvfb 已启动 (PID: %s)。\n" "$XVFB_PID"
+        printf "${Info} Xvfb 已启动。\n"
     fi
 
     # 检查 x11vnc 是否已在运行（pgrep 属于 busybox）
@@ -138,9 +137,8 @@ start_virtual_screen() {
     else
         printf "${Info} 正在启动 X11VNC 服务...\n"
         run x11vnc -display ${DISPLAY_NUM} -forever -shared > /dev/null 2>&1 &
-        X11VNC_PID=$!
         sleep 2
-        printf "${Info} X11VNC 已启动 (PID: %s)。\n" "$X11VNC_PID"
+        printf "${Info} X11VNC 已启动。\n"
     fi
 
     _local_ip=$(get_local_ip)
