@@ -61,7 +61,8 @@ cleanup() {
         printf "${Info} X11VNC (PID: %s) 已关闭。\n" "$X11VNC_PID"
     fi
     printf "${Info} 清理完成，脚本已退出。\n"
-    stty sane
+    # 尝试恢复终端设置（OpenHarmony 可能不支持 stty，忽略错误）
+    stty sane 2>/dev/null || true
     exit 0
 }
 
