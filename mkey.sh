@@ -40,7 +40,7 @@ print_command() {
     printf "${Yellow_font_prefix}>>> ${Green_font_prefix}%s${Font_color_suffix}\n" "$1"
 }
 
-# 等待用户按回车（兼容不支持 read -p 的 sh）
+# 等待用户按回车（OpenHarmony sh 不支持 read -p）
 press_enter() {
     printf "%s" "$1"
     read _dummy
@@ -50,7 +50,7 @@ press_enter() {
 cleanup() {
     printf "\n"
     printf "${Info} 正在停止所有 ROS 节点...\n"
-    run killall -9 rosmaster rosout > /dev/null 2>&1
+    run busybox killall -9 rosmaster rosout > /dev/null 2>&1
     printf "${Info} 正在关闭虚拟屏幕 (Xvfb) 和 X11VNC 服务...\n"
     if [ -n "$XVFB_PID" ]; then
         kill "$XVFB_PID" > /dev/null 2>&1
@@ -61,8 +61,8 @@ cleanup() {
         printf "${Info} X11VNC (PID: %s) 已关闭。\n" "$X11VNC_PID"
     fi
     printf "${Info} 清理完成，脚本已退出。\n"
-    # 尝试恢复终端设置（OpenHarmony 可能不支持 stty，忽略错误）
-    stty sane 2>/dev/null || true
+    # stty 属于 busybox，OpenHarmony toybox 中不可用，忽略错误
+    run busybox stty sane 2>/dev/null || true
     exit 0
 }
 
@@ -83,19 +83,34 @@ check_mount() {
     fi
 }
 
-# 获取本机 IP（不依赖 awk，使用纯 busybox 命令）
+# 获取本机 IP（使用 busybox ip/ifconfig + cut/grep）
 get_local_ip() {
-    # 优先尝试 ip addr，通过 grep + cut 提取 IP
     _ip=""
-    # 尝试从 ip addr 中提取第一个非 127 的 inet 地址
-    _ip=$(ip addr 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | head -1 | tr -s ' ' | cut -d' ' -f3 | cut -d'/' -f1)
-    # 如果 ip addr 不可用，尝试 ifconfig
+    # 优先尝试 busybox ip addr
+    _ip=$(run busybox ip addr 2>/dev/null \
+        | run busybox grep "inet " \
+        | run busybox grep -v "127.0.0.1" \
+        | run busybox head -1 \
+        | run busybox tr -s ' ' \
+        | run busybox cut -d' ' -f3 \
+        | run busybox cut -d'/' -f1)
+    # 备选：busybox ifconfig（旧格式 inet addr:x.x.x.x）
     if [ -z "$_ip" ]; then
-        _ip=$(ifconfig 2>/dev/null | grep "inet addr" | grep -v "127.0.0.1" | head -1 | cut -d':' -f2 | cut -d' ' -f1)
+        _ip=$(run busybox ifconfig 2>/dev/null \
+            | run busybox grep "inet addr" \
+            | run busybox grep -v "127.0.0.1" \
+            | run busybox head -1 \
+            | run busybox cut -d':' -f2 \
+            | run busybox cut -d' ' -f1)
     fi
-    # 如果还是空，尝试新版 ifconfig 格式
+    # 备选：busybox ifconfig（新格式 inet x.x.x.x）
     if [ -z "$_ip" ]; then
-        _ip=$(ifconfig 2>/dev/null | grep "inet " | grep -v "127.0.0.1" | head -1 | tr -s ' ' | cut -d' ' -f3)
+        _ip=$(run busybox ifconfig 2>/dev/null \
+            | run busybox grep "inet " \
+            | run busybox grep -v "127.0.0.1" \
+            | run busybox head -1 \
+            | run busybox tr -s ' ' \
+            | run busybox cut -d' ' -f3)
     fi
     printf "%s" "${_ip:-未知}"
 }
@@ -106,8 +121,8 @@ start_virtual_screen() {
     printf "${Info} 正在初始化图形显示环境...\n"
     printf "${Separator}\n"
 
-    # 检查 Xvfb 是否已在运行
-    if run pgrep -x "Xvfb" > /dev/null 2>&1; then
+    # 检查 Xvfb 是否已在运行（pgrep 属于 busybox）
+    if run busybox pgrep -x "Xvfb" > /dev/null 2>&1; then
         printf "${Tip} 检测到 Xvfb 已在运行，跳过启动。\n"
     else
         printf "${Info} 正在启动 X Virtual Framebuffer (Xvfb)...\n"
@@ -117,8 +132,8 @@ start_virtual_screen() {
         printf "${Info} Xvfb 已启动 (PID: %s)。\n" "$XVFB_PID"
     fi
 
-    # 检查 x11vnc 是否已在运行
-    if run pgrep -x "x11vnc" > /dev/null 2>&1; then
+    # 检查 x11vnc 是否已在运行（pgrep 属于 busybox）
+    if run busybox pgrep -x "x11vnc" > /dev/null 2>&1; then
         printf "${Tip} 检测到 X11VNC 已在运行，跳过启动。\n"
     else
         printf "${Info} 正在启动 X11VNC 服务...\n"
@@ -147,18 +162,20 @@ check_dev() {
     printf "${Info} 正在检查设备连接状态...\n"
     printf "${Separator}\n"
 
-    # 检查底盘
+    # 检查底盘（readlink 属于 busybox）
     if [ -L "/dev/sparkBase" ] && [ -e "/dev/sparkBase" ]; then
-        printf "${Info} ${Green_font_prefix}底盘已连接${Font_color_suffix}: /dev/sparkBase -> %s\n" "$(readlink /dev/sparkBase)"
+        printf "${Info} ${Green_font_prefix}底盘已连接${Font_color_suffix}: /dev/sparkBase -> %s\n" \
+            "$(run busybox readlink /dev/sparkBase)"
     elif [ -L "/dev/sparkBase" ]; then
         printf "${Error} 底盘软链接存在但设备已断开，请重新连接！(/dev/sparkBase)\n"
     else
         printf "${Error} 底盘未连接，请检查 /dev/sparkBase 软链接！(usbRules.sh 守护进程是否运行?)\n"
     fi
 
-    # 检查激光雷达
+    # 检查激光雷达（readlink 属于 busybox）
     if [ -L "/dev/ydlidar" ] && [ -e "/dev/ydlidar" ]; then
-        printf "${Info} ${Green_font_prefix}激光雷达已连接${Font_color_suffix}: /dev/ydlidar -> %s\n" "$(readlink /dev/ydlidar)"
+        printf "${Info} ${Green_font_prefix}激光雷达已连接${Font_color_suffix}: /dev/ydlidar -> %s\n" \
+            "$(run busybox readlink /dev/ydlidar)"
         LIDARTYPE="ydlidar_g6"
     elif [ -L "/dev/ydlidar" ]; then
         printf "${Error} 激光雷达软链接存在但设备已断开，请重新连接！(/dev/ydlidar)\n"
@@ -168,9 +185,10 @@ check_dev() {
         LIDARTYPE="ydlidar_g6"
     fi
 
-    # 检查机械臂
+    # 检查机械臂（readlink 属于 busybox）
     if [ -L "/dev/uarm" ] && [ -e "/dev/uarm" ]; then
-        printf "${Info} ${Green_font_prefix}机械臂 (uArm) 已连接${Font_color_suffix}: /dev/uarm -> %s\n" "$(readlink /dev/uarm)"
+        printf "${Info} ${Green_font_prefix}机械臂 (uArm) 已连接${Font_color_suffix}: /dev/uarm -> %s\n" \
+            "$(run busybox readlink /dev/uarm)"
         ARMTYPE="uarm"
     elif [ -L "/dev/uarm" ]; then
         printf "${Warn} 机械臂软链接存在但设备已断开，请检查机械臂是否上电！(/dev/uarm)\n"
@@ -181,6 +199,7 @@ check_dev() {
     fi
 
     # 摄像头（深度摄像头通过 USB 直连，不使用串口软链接）
+    # ls 在 toybox 和 busybox 中均可用，此处直接使用
     if ls /dev/video* > /dev/null 2>&1; then
         printf "${Info} ${Green_font_prefix}摄像头已检测到${Font_color_suffix} (类型: %s)\n" "$CAMERATYPE"
     else
@@ -210,7 +229,11 @@ let_robot_go() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始启动主程序（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_teleop teleop.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE} arm_type_tel:=${ARMTYPE} enable_arm_tel:='yes'"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_teleop teleop.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE} arm_type_tel:=${ARMTYPE} enable_arm_tel:='yes'
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_teleop teleop.launch \
+        camera_type_tel:=${CAMERATYPE} \
+        lidar_type_tel:=${LIDARTYPE} \
+        arm_type_tel:=${ARMTYPE} \
+        enable_arm_tel:='yes'
 }
 
 # 2. 手眼标定
@@ -225,7 +248,9 @@ hand_eye_calibration() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_cal_cv3.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_cal_cv3.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_cal_cv3.launch \
+        camera_type_tel:=${CAMERATYPE} \
+        lidar_type_tel:=${LIDARTYPE}
     printf "\n"
     printf "${Info} 程序启动后，请在 ${Yellow_font_prefix}新终端${Font_color_suffix} 中执行以下命令以触发标定:\n"
     printf "${Info} ${Green_font_prefix}run rostopic pub /start_topic std_msgs/String \"data: 'start'\"${Font_color_suffix}\n"
@@ -243,7 +268,9 @@ object_grasping() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_object_only_cv3.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_object_only_cv3.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_object_only_cv3.launch \
+        camera_type_tel:=${CAMERATYPE} \
+        lidar_type_tel:=${LIDARTYPE}
     printf "\n"
     printf "${Info} 程序启动后，请在 ${Yellow_font_prefix}新终端${Font_color_suffix} 中执行以下命令以开始抓取:\n"
     printf "${Info} ${Green_font_prefix}run rosservice call /s_carry_object 'type: 1'${Font_color_suffix}\n"
@@ -269,7 +296,10 @@ build_map_lidar() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch slam_methods_tel:=gmapping camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch slam_methods_tel:="gmapping" camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch \
+        slam_methods_tel:="gmapping" \
+        camera_type_tel:=${CAMERATYPE} \
+        lidar_type_tel:=${LIDARTYPE}
 }
 
 # 5. 深度摄像头建图（RTAB-Map）
@@ -290,7 +320,8 @@ build_map_camera() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_teleop.launch camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_teleop.launch camera_type_tel:=${CAMERATYPE}
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_teleop.launch \
+        camera_type_tel:=${CAMERATYPE}
 }
 
 # 6. 激光雷达导航
@@ -307,7 +338,9 @@ navigation_lidar() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_lidar_rviz.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_lidar_rviz.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_lidar_rviz.launch \
+        camera_type_tel:=${CAMERATYPE} \
+        lidar_type_tel:=${LIDARTYPE}
 }
 
 # 7. 深度摄像头导航
@@ -325,7 +358,8 @@ navigation_camera() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_nav.launch camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_nav.launch camera_type_tel:=${CAMERATYPE}
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_nav.launch \
+        camera_type_tel:=${CAMERATYPE}
 }
 
 # 8. 深度跟随
@@ -340,7 +374,8 @@ depth_follow() {
     printf "${Separator}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_follower bringup.launch camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_follower bringup.launch camera_type_tel:=${CAMERATYPE}
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_follower bringup.launch \
+        camera_type_tel:=${CAMERATYPE}
 }
 
 # =================================================
