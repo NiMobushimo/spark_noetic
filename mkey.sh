@@ -93,13 +93,15 @@ check_mount() {
 
     # 2. 确保 /tmp 可写（Xvfb 需要在 /tmp 创建锁文件）
     if ! touch /tmp/.write_test > /dev/null 2>&1; then
-        printf "${Info} /tmp 为只读，正在重新挂载 /tmp...\n"
-        mount -o remount,rw /tmp
+        printf "${Info} /tmp 为只读，正在挂载 tmpfs 到 /tmp...\n"
+        # OpenHarmony 下 /tmp 不在 /proc/mounts 中，直接用 tmpfs 覆盖挂载
+        mount -t tmpfs tmpfs /tmp 2>/dev/null
         if ! touch /tmp/.write_test > /dev/null 2>&1; then
-            printf "${Warn} /tmp 挂载失败，尝试绑定挂载 tmpfs...\n"
-            mount -t tmpfs tmpfs /tmp
+            printf "${Error} /tmp 挂载失败，Xvfb 可能无法启动！请手动执行: mount -t tmpfs tmpfs /tmp\n"
+        else
+            rm -f /tmp/.write_test
+            printf "${Info} tmpfs 已挂载到 /tmp，可写。\n"
         fi
-        rm -f /tmp/.write_test
     else
         rm -f /tmp/.write_test
         printf "${Info} /tmp 已是可写状态。\n"
@@ -161,7 +163,7 @@ start_virtual_screen() {
         printf "${Info} 正在启动 X Virtual Framebuffer (Xvfb)...\n"
         # startxvfb 是封装脚本，内部用 run Xvfb 启动。
         # 不保存 PID，cleanup 时用 killall 按进程名杀死。
-        run startxvfb &
+        run startxvfb > /dev/null 2>&1 &
         sleep 3
         # 验证 Xvfb 是否真实启动成功
         if run busybox pgrep -x "Xvfb" > /dev/null 2>&1; then
