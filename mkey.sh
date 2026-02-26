@@ -59,7 +59,6 @@ cleanup() {
         printf "${Info} X11VNC 已关闭。\n" || \
         printf "${Tip} X11VNC 未在运行或已提前退出。\n"
     printf "${Info} 清理完成，脚本已退出。\n"
-    # stty 属于 busybox，OpenHarmony toybox 中不可用，忽略错误
     run busybox stty sane 2>/dev/null || true
     exit 0
 }
@@ -94,7 +93,6 @@ check_mount() {
     # 2. 确保 /tmp 可写（Xvfb 需要在 /tmp 创建锁文件）
     if ! touch /tmp/.write_test > /dev/null 2>&1; then
         printf "${Info} /tmp 为只读，正在挂载 tmpfs 到 /tmp...\n"
-        # OpenHarmony 下 /tmp 不在 /proc/mounts 中，直接用 tmpfs 覆盖挂载
         mount -t tmpfs tmpfs /tmp 2>/dev/null
         if ! touch /tmp/.write_test > /dev/null 2>&1; then
             printf "${Error} /tmp 挂载失败，Xvfb 可能无法启动！请手动执行: mount -t tmpfs tmpfs /tmp\n"
@@ -156,16 +154,13 @@ start_virtual_screen() {
     printf "${Info} 正在初始化图形显示环境...\n"
     printf "${Separator}\n"
 
-    # 检查 Xvfb 是否已在运行（pgrep 属于 busybox）
+    # 检查 Xvfb 是否已在运行
     if run busybox pgrep -x "Xvfb" > /dev/null 2>&1; then
         printf "${Tip} 检测到 Xvfb 已在运行，跳过启动。\n"
     else
         printf "${Info} 正在启动 X Virtual Framebuffer (Xvfb)...\n"
-        # startxvfb 是封装脚本，内部用 run Xvfb 启动。
-        # 不保存 PID，cleanup 时用 killall 按进程名杀死。
         run startxvfb > /dev/null 2>&1 &
         sleep 3
-        # 验证 Xvfb 是否真实启动成功
         if run busybox pgrep -x "Xvfb" > /dev/null 2>&1; then
             printf "${Info} Xvfb 已成功启动。\n"
         else
@@ -173,7 +168,7 @@ start_virtual_screen() {
         fi
     fi
 
-    # 检查 x11vnc 是否已在运行（pgrep 属于 busybox）
+    # 检查 x11vnc 是否已在运行
     if run busybox pgrep -x "x11vnc" > /dev/null 2>&1; then
         printf "${Tip} 检测到 X11VNC 已在运行，跳过启动。\n"
     else
@@ -196,13 +191,12 @@ start_virtual_screen() {
 # 设备检查
 # =================================================
 
-# 检查设备连接（通过软链接判断，适配 OpenHarmony）
 check_dev() {
     printf "${Separator}\n"
     printf "${Info} 正在检查设备连接状态...\n"
     printf "${Separator}\n"
 
-    # 检查底盘（readlink 属于 busybox）
+    # 检查底盘
     if [ -L "/dev/sparkBase" ] && [ -e "/dev/sparkBase" ]; then
         printf "${Info} ${Green_font_prefix}底盘已连接${Font_color_suffix}: /dev/sparkBase -> %s\n" \
             "$(run busybox readlink /dev/sparkBase)"
@@ -212,7 +206,7 @@ check_dev() {
         printf "${Error} 底盘未连接，请检查 /dev/sparkBase 软链接！(usbRules.sh 守护进程是否运行?)\n"
     fi
 
-    # 检查激光雷达（readlink 属于 busybox）
+    # 检查激光雷达
     if [ -L "/dev/ydlidar" ] && [ -e "/dev/ydlidar" ]; then
         printf "${Info} ${Green_font_prefix}激光雷达已连接${Font_color_suffix}: /dev/ydlidar -> %s\n" \
             "$(run busybox readlink /dev/ydlidar)"
@@ -225,7 +219,7 @@ check_dev() {
         LIDARTYPE="ydlidar_g6"
     fi
 
-    # 检查机械臂（readlink 属于 busybox）
+    # 检查机械臂
     if [ -L "/dev/uarm" ] && [ -e "/dev/uarm" ]; then
         printf "${Info} ${Green_font_prefix}机械臂 (uArm) 已连接${Font_color_suffix}: /dev/uarm -> %s\n" \
             "$(run busybox readlink /dev/uarm)"
@@ -238,8 +232,7 @@ check_dev() {
         ARMTYPE="uarm"
     fi
 
-    # 摄像头（深度摄像头通过 USB 直连，不使用串口软链接）
-    # ls 在 toybox 和 busybox 中均可用，此处直接使用
+    # 检查摄像头
     if ls /dev/video* > /dev/null 2>&1; then
         printf "${Info} ${Green_font_prefix}摄像头已检测到${Font_color_suffix} (类型: %s)\n" "$CAMERATYPE"
     else
@@ -251,43 +244,30 @@ check_dev() {
 }
 
 # =================================================
-# 建图公共提示（底盘控制 + 地图保存）
-# =================================================
-
-# 打印建图前的底盘控制提示
-_map_teleop_tip() {
-    printf "${Tip} ${Yellow_font_prefix}底盘控制提示:${Font_color_suffix}\n"
-    printf "${Tip}   建图过程中，需要在 ${Yellow_font_prefix}MobaXterm 中另开一个终端${Font_color_suffix} 执行以下命令控制底盘:\n"
-    printf "${Tip}   ${Green_font_prefix}run roslaunch spark_teleop teleop_only.launch${Font_color_suffix}\n"
-    printf "${Tip}   键盘 wsad 分别对应 前/后/左/右。\n"
-}
-
-# 打印 2D 地图保存提示（gmapping / hector / karto）
-_map_save_2d_tip() {
-    printf "${Tip} ${Yellow_font_prefix}保存地图:${Font_color_suffix}\n"
-    printf "${Tip}   建图完成后，在 ${Yellow_font_prefix}新终端${Font_color_suffix} 中执行以下命令保存地图:\n"
-    printf "${Tip}   ${Green_font_prefix}mkdir -p /data/local/release/usr/share/spark_slam/scripts${Font_color_suffix}\n"
-    printf "${Tip}   ${Green_font_prefix}run roslaunch map_server map_server.launch${Font_color_suffix}\n"
-}
-
-# =================================================
 # 功能函数
 # =================================================
 
-# 1. 让机器人动起来（键盘控制）
+# 1. 让机器人动起来
 let_robot_go() {
     printf "${Info}\n"
-    printf "${Info} 让机器人动起来 (键盘控制 + RVIZ 可视化)\n"
-    printf "${Separator}\n"
+    printf "${Info} 让机器人动起来\n"
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 底盘已正确连接 (/dev/sparkBase)。\n"
+    printf "${Info}       B. 激光雷达已正确连接 (/dev/ydlidar)。\n"
+    printf "${Info}\n"
     printf "${Tip} 底盘控制说明：\n"
     printf "${Tip}   要控制底盘移动，需要在 ${Yellow_font_prefix}MobaXterm 中另开一个终端${Font_color_suffix} 并执行:\n"
     printf "${Tip}   ${Green_font_prefix}run roslaunch spark_teleop teleop_only.launch${Font_color_suffix}\n"
     printf "${Tip} 键盘方向对应：\n"
+    printf "${Tip}                            \n"
     printf "${Tip}           w 前进           \n"
     printf "${Tip}   a 左转         d 右转   \n"
     printf "${Tip}           s 后退           \n"
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始启动主程序（RVIZ 将在 VNC 窗口中显示）: "
+    printf "${Tip}                            \n"
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
+    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_teleop teleop.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE} arm_type_tel:=${ARMTYPE} enable_arm_tel:='yes'"
     DISPLAY=${DISPLAY_NUM} run roslaunch spark_teleop teleop.launch \
         camera_type_tel:=${CAMERATYPE} \
@@ -296,16 +276,212 @@ let_robot_go() {
         enable_arm_tel:='yes'
 }
 
-# 2. 手眼标定
+# 2. 让SPARK跟着你走
+depth_follow() {
+    printf "${Info}\n"
+    printf "${Info} 让SPARK跟着你走\n"
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 深度摄像头 (%s) 已正确连接。\n" "$CAMERATYPE"
+    printf "${Info}       B. ${Red_font_prefix}摄像头不可通过 USB 拓展坞连接开发板，否则无法正常使用！${Font_color_suffix}\n"
+    printf "${Info}       C. 启动后，请站在机器人正前方约 1 米处，机器人将自动跟随您移动。\n"
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
+    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
+    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_follower bringup.launch camera_type_tel:=${CAMERATYPE}"
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_follower bringup.launch \
+        camera_type_tel:=${CAMERATYPE}
+}
+
+# 3. 让SPARK使用激光雷达绘制地图
+build_map_lidar() {
+    printf "${Info}\n"
+    printf "${Info} 让SPARK使用激光雷达绘制地图\n"
+    printf "${Info}\n"
+    printf "${Info} 请选择 SLAM 的方式：\n"
+    printf "  ${Green_font_prefix}1.${Font_color_suffix} gmapping\n"
+    printf "  ${Green_font_prefix}2.${Font_color_suffix} hector\n"
+    printf "  ${Green_font_prefix}3.${Font_color_suffix} karto\n"
+    printf "  ${Green_font_prefix}4.${Font_color_suffix} 退出请输入：Ctrl + c\n"
+    printf "\n"
+    printf "请输入数字 [1-3]: "
+    read slamnum
+    case "$slamnum" in
+        1) SLAMTYPE="gmapping" ;;
+        2) SLAMTYPE="hector" ;;
+        3) SLAMTYPE="karto" ;;
+        *) printf "${Error} 错误，默认使用 gmapping\n" ; SLAMTYPE="gmapping" ;;
+    esac
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 激光雷达已上电并正确连接 (/dev/ydlidar)。\n"
+    printf "${Info}       B. 底盘已正确连接 (/dev/sparkBase)。\n"
+    printf "${Info}\n"
+    printf "${Tip} 底盘控制提示：\n"
+    printf "${Tip}   建图过程中，需要在 ${Yellow_font_prefix}MobaXterm 中另开一个终端${Font_color_suffix} 执行以下命令控制底盘:\n"
+    printf "${Tip}   ${Green_font_prefix}run roslaunch spark_teleop teleop_only.launch${Font_color_suffix}\n"
+    printf "${Tip}   键盘 wsad 分别对应 前/后/左/右。\n"
+    printf "${Info}\n"
+    printf "${Tip} 保存地图：\n"
+    printf "${Tip}   建图完成后，在 ${Yellow_font_prefix}新终端${Font_color_suffix} 中执行以下命令保存地图:\n"
+    printf "${Tip}   ${Green_font_prefix}mkdir -p /data/local/release/usr/share/spark_slam/scripts${Font_color_suffix}\n"
+    printf "${Tip}   ${Green_font_prefix}run roslaunch map_server map_server.launch${Font_color_suffix}\n"
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
+    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
+    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch slam_methods_tel:=${SLAMTYPE} camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch \
+        slam_methods_tel:=${SLAMTYPE} \
+        camera_type_tel:=${CAMERATYPE} \
+        lidar_type_tel:=${LIDARTYPE}
+}
+
+# 4. 让SPARK使用深度摄像头绘制地图
+build_map_camera() {
+    printf "${Info}\n"
+    printf "${Info} 让SPARK使用深度摄像头绘制地图\n"
+    printf "${Info}\n"
+    printf "${Info} 请选择建图的方式：\n"
+    printf "  ${Green_font_prefix}1.${Font_color_suffix} RTAB-Map  (3D 建图，推荐)\n"
+    printf "  ${Green_font_prefix}2.${Font_color_suffix} gmapping  (2D，摄像头模拟激光)\n"
+    printf "  ${Green_font_prefix}3.${Font_color_suffix} hector    (2D，摄像头模拟激光)\n"
+    printf "  ${Green_font_prefix}4.${Font_color_suffix} karto     (2D，摄像头模拟激光)\n"
+    printf "  ${Green_font_prefix}5.${Font_color_suffix} 退出请输入：Ctrl + c\n"
+    printf "\n"
+    printf "请输入数字 [1-4]: "
+    read camnum
+    case "$camnum" in
+        1) CAMMAP="rtabmap" ;;
+        2) CAMMAP="gmapping" ;;
+        3) CAMMAP="hector" ;;
+        4) CAMMAP="karto" ;;
+        *) printf "${Error} 错误，默认使用 RTAB-Map\n" ; CAMMAP="rtabmap" ;;
+    esac
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
+    printf "${Info}       B. 底盘已正确连接 (/dev/sparkBase)。\n"
+    printf "${Info}\n"
+    printf "${Tip} 底盘控制提示：\n"
+    printf "${Tip}   建图过程中，需要在 ${Yellow_font_prefix}MobaXterm 中另开一个终端${Font_color_suffix} 执行以下命令控制底盘:\n"
+    printf "${Tip}   ${Green_font_prefix}run roslaunch spark_teleop teleop_only.launch${Font_color_suffix}\n"
+    printf "${Tip}   键盘 wsad 分别对应 前/后/左/右。\n"
+    printf "${Info}\n"
+    if [ "$CAMMAP" = "rtabmap" ]; then
+        printf "${Tip} 地图保存：\n"
+        printf "${Tip}   建图完成后，地图数据库将自动保存至: /data/local/release/rtabmap.db\n"
+    else
+        printf "${Tip} 保存地图：\n"
+        printf "${Tip}   建图完成后，在 ${Yellow_font_prefix}新终端${Font_color_suffix} 中执行以下命令保存地图:\n"
+        printf "${Tip}   ${Green_font_prefix}mkdir -p /data/local/release/usr/share/spark_slam/scripts${Font_color_suffix}\n"
+        printf "${Tip}   ${Green_font_prefix}run roslaunch map_server map_server.launch${Font_color_suffix}\n"
+    fi
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
+    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
+    if [ "$CAMMAP" = "rtabmap" ]; then
+        print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_teleop.launch camera_type_tel:=${CAMERATYPE}"
+        DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_teleop.launch \
+            camera_type_tel:=${CAMERATYPE}
+    else
+        print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch slam_methods_tel:=${CAMMAP} camera_type_tel:=${CAMERATYPE}"
+        DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch \
+            slam_methods_tel:=${CAMMAP} \
+            camera_type_tel:=${CAMERATYPE}
+    fi
+}
+
+# 5. 让SPARK使用激光雷达进行导航
+navigation_lidar() {
+    printf "${Info}\n"
+    printf "${Info} 让SPARK使用激光雷达进行导航\n"
+    printf "${Info}\n"
+    printf "${Info} 请选择导航的方式：\n"
+    printf "  ${Green_font_prefix}1.${Font_color_suffix} AMCL 导航\n"
+    printf "  ${Green_font_prefix}2.${Font_color_suffix} 退出请输入：Ctrl + c\n"
+    printf "\n"
+    printf "请输入数字 [1]: "
+    read navnum
+    case "$navnum" in
+        1) NAVTYPE="amcl" ;;
+        *) printf "${Error} 错误，默认使用 AMCL\n" ; NAVTYPE="amcl" ;;
+    esac
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 激光雷达已上电并正确连接 (/dev/ydlidar)。\n"
+    printf "${Info}       B. 已有建图阶段保存的地图文件 (test_map.yaml / test_map.pgm)。\n"
+    printf "${Info}\n"
+    printf "${Tip} 导航操作说明：\n"
+    printf "${Tip}   1. 导航启动后，在 VNC 的 RVIZ 中点击 '2D Pose Estimate' 并在地图上手动初始化机器人位置。\n"
+    printf "${Tip}   2. 初始化成功后，点击 '2D Nav Goal' 并在地图上指定导航目标点，机器人将自主导航。\n"
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
+    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
+    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_lidar_rviz.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
+    DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_lidar_rviz.launch \
+        camera_type_tel:=${CAMERATYPE} \
+        lidar_type_tel:=${LIDARTYPE}
+}
+
+# 6. 让SPARK使用深度摄像头进行导航
+navigation_camera() {
+    printf "${Info}\n"
+    printf "${Info} 让SPARK使用深度摄像头进行导航\n"
+    printf "${Info}\n"
+    printf "${Info} 请选择导航的方式：\n"
+    printf "  ${Green_font_prefix}1.${Font_color_suffix} RTAB-Map 导航  (需 rtabmap.db 地图)\n"
+    printf "  ${Green_font_prefix}2.${Font_color_suffix} 2D AMCL 导航   (需深度摄像头 2D 建图地图)\n"
+    printf "  ${Green_font_prefix}3.${Font_color_suffix} 退出请输入：Ctrl + c\n"
+    printf "\n"
+    printf "请输入数字 [1-2]: "
+    read navnum
+    case "$navnum" in
+        1) CAMNAVTYPE="rtabmap" ;;
+        2) CAMNAVTYPE="amcl2d" ;;
+        *) printf "${Error} 错误，默认使用 RTAB-Map 导航\n" ; CAMNAVTYPE="rtabmap" ;;
+    esac
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
+    if [ "$CAMNAVTYPE" = "rtabmap" ]; then
+        printf "${Info}       B. 已有建图阶段保存的地图数据库 (/data/local/release/rtabmap.db)。\n"
+        printf "${Info}       C. 请将机器人放置在建图时的起始点位置。\n"
+        printf "${Info}\n"
+        printf "${Tip} 导航操作说明：\n"
+        printf "${Tip}   导航启动后，在 VNC 的 RVIZ 中点击 '2D Nav Goal' 并在地图上指定导航目标点。\n"
+        printf "${Tip}   如需加载 3D 地图，点击 RVIZ 中 Display -> Rtabmap cloud -> Download map。\n"
+    else
+        printf "${Info}       B. 已有深度摄像头 2D 建图阶段保存的地图文件 (test_map.yaml / test_map.pgm)。\n"
+        printf "${Info}\n"
+        printf "${Tip} 导航操作说明：\n"
+        printf "${Tip}   1. 导航启动后，在 VNC 的 RVIZ 中点击 '2D Pose Estimate' 并在地图上手动初始化机器人位置。\n"
+        printf "${Tip}   2. 初始化成功后，点击 '2D Nav Goal' 并在地图上指定导航目标点，机器人将自主导航。\n"
+    fi
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
+    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
+    if [ "$CAMNAVTYPE" = "rtabmap" ]; then
+        print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_nav.launch camera_type_tel:=${CAMERATYPE}"
+        DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_nav.launch \
+            camera_type_tel:=${CAMERATYPE}
+    else
+        print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_rviz.launch camera_type_tel:=${CAMERATYPE}"
+        DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_rviz.launch \
+            camera_type_tel:=${CAMERATYPE}
+    fi
+}
+
+# 7. 机械臂与摄像头标定
 hand_eye_calibration() {
     printf "${Info}\n"
-    printf "${Info} 手眼标定\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 摄像头已反向向下安装好。\n"
-    printf "${Tip}   B. 机械臂已正常上电。\n"
-    printf "${Tip}   C. 标定程序启动后，请在 VNC 窗口中查看相机视角并调整角度。\n"
-    printf "${Separator}\n"
+    printf "${Info} 机械臂与摄像头标定\n"
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 摄像头已反向向下安装好。\n"
+    printf "${Info}       B. 机械臂已正常上电。\n"
+    printf "${Info}       C. 标定程序启动后，请在 VNC 窗口中查看相机视角并调整角度。\n"
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_cal_cv3.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
     DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_cal_cv3.launch \
@@ -316,16 +492,17 @@ hand_eye_calibration() {
     printf "${Info} ${Green_font_prefix}run rostopic pub /start_topic std_msgs/String \"data: 'start'\"${Font_color_suffix}\n"
 }
 
-# 3. 物品抓取
+# 8. 让SPARK通过机械臂进行视觉抓取
 object_grasping() {
     printf "${Info}\n"
-    printf "${Info} 物品抓取\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 已完成手眼标定，标定文件已保存至正确路径。\n"
-    printf "${Tip}   B. 机械臂已正常上电。\n"
-    printf "${Tip}   C. 已准备好目标物品。\n"
-    printf "${Separator}\n"
+    printf "${Info} 让SPARK通过机械臂进行视觉抓取\n"
+    printf "${Info}\n"
+    printf "${Info} 请确定：\n"
+    printf "${Info}       A. 已完成机械臂与摄像头标定，标定文件已保存至正确路径。\n"
+    printf "${Info}       B. 机械臂已正常上电。\n"
+    printf "${Info}       C. 已准备好目标物品。\n"
+    printf "${Info} 退出请输入：Ctrl + c\n"
+    printf "${Info}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_object_only_cv3.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
     DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_object_only_cv3.launch \
@@ -337,310 +514,6 @@ object_grasping() {
 }
 
 # =================================================
-# 建图功能 — 激光雷达
-# =================================================
-
-# 4-1. 激光雷达建图（GMapping）
-build_map_lidar_gmapping() {
-    printf "${Info}\n"
-    printf "${Info} 激光雷达建图 (GMapping)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 激光雷达已上电并正确连接 (/dev/ydlidar)。\n"
-    printf "${Tip}   B. 底盘已正确连接 (/dev/sparkBase)。\n"
-    _map_teleop_tip
-    _map_save_2d_tip
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch slam_methods_tel:=gmapping camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch \
-        slam_methods_tel:="gmapping" \
-        camera_type_tel:=${CAMERATYPE} \
-        lidar_type_tel:=${LIDARTYPE}
-}
-
-# 4-2. 激光雷达建图（Hector）
-build_map_lidar_hector() {
-    printf "${Info}\n"
-    printf "${Info} 激光雷达建图 (Hector SLAM)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 激光雷达已上电并正确连接 (/dev/ydlidar)。\n"
-    printf "${Tip}   B. 底盘已正确连接 (/dev/sparkBase)。\n"
-    printf "${Tip}   C. Hector SLAM 无需里程计，适合在里程计不可靠的场景下使用。\n"
-    _map_teleop_tip
-    _map_save_2d_tip
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch slam_methods_tel:=hector camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch \
-        slam_methods_tel:="hector" \
-        camera_type_tel:=${CAMERATYPE} \
-        lidar_type_tel:=${LIDARTYPE}
-}
-
-# 4-3. 激光雷达建图（Karto）
-build_map_lidar_karto() {
-    printf "${Info}\n"
-    printf "${Info} 激光雷达建图 (Karto SLAM)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 激光雷达已上电并正确连接 (/dev/ydlidar)。\n"
-    printf "${Tip}   B. 底盘已正确连接 (/dev/sparkBase)。\n"
-    printf "${Tip}   C. Karto SLAM 基于图优化，建图精度较高，适合大场景使用。\n"
-    _map_teleop_tip
-    _map_save_2d_tip
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch slam_methods_tel:=karto camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam 2d_slam_teleop.launch \
-        slam_methods_tel:="karto" \
-        camera_type_tel:=${CAMERATYPE} \
-        lidar_type_tel:=${LIDARTYPE}
-}
-
-# =================================================
-# 建图功能 — 深度摄像头
-# =================================================
-
-# 5-1. 深度摄像头建图（RTAB-Map）
-build_map_camera_rtabmap() {
-    printf "${Info}\n"
-    printf "${Info} 深度摄像头建图 (RTAB-Map)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
-    printf "${Tip}   B. 底盘已正确连接 (/dev/sparkBase)。\n"
-    printf "${Tip}   C. RTAB-Map 支持 3D 建图，建图效果最佳，但对算力要求较高。\n"
-    _map_teleop_tip
-    printf "${Tip} ${Yellow_font_prefix}地图保存:${Font_color_suffix}\n"
-    printf "${Tip}   建图完成后，地图数据库将自动保存至: /data/local/release/rtabmap.db\n"
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_teleop.launch camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_teleop.launch \
-        camera_type_tel:=${CAMERATYPE}
-}
-
-# 5-2. 深度摄像头建图（GMapping）
-build_map_camera_gmapping() {
-    printf "${Info}\n"
-    printf "${Info} 深度摄像头建图 (GMapping)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
-    printf "${Tip}   B. 底盘已正确连接 (/dev/sparkBase)。\n"
-    printf "${Tip}   C. 深度摄像头将模拟激光雷达数据，进行 2D 建图。\n"
-    _map_teleop_tip
-    _map_save_2d_tip
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch slam_methods_tel:=gmapping camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch \
-        slam_methods_tel:="gmapping" \
-        camera_type_tel:=${CAMERATYPE}
-}
-
-# 5-3. 深度摄像头建图（Hector）
-build_map_camera_hector() {
-    printf "${Info}\n"
-    printf "${Info} 深度摄像头建图 (Hector SLAM)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
-    printf "${Tip}   B. 底盘已正确连接 (/dev/sparkBase)。\n"
-    printf "${Tip}   C. Hector SLAM 无需里程计，深度摄像头模拟激光数据进行 2D 建图。\n"
-    _map_teleop_tip
-    _map_save_2d_tip
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch slam_methods_tel:=hector camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch \
-        slam_methods_tel:="hector" \
-        camera_type_tel:=${CAMERATYPE}
-}
-
-# 5-4. 深度摄像头建图（Karto）
-build_map_camera_karto() {
-    printf "${Info}\n"
-    printf "${Info} 深度摄像头建图 (Karto SLAM)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
-    printf "${Tip}   B. 底盘已正确连接 (/dev/sparkBase)。\n"
-    printf "${Tip}   C. Karto SLAM 基于图优化，深度摄像头模拟激光数据进行 2D 建图。\n"
-    _map_teleop_tip
-    _map_save_2d_tip
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch slam_methods_tel:=karto camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_slam depth_slam_teleop.launch \
-        slam_methods_tel:="karto" \
-        camera_type_tel:=${CAMERATYPE}
-}
-
-# =================================================
-# 导航功能
-# =================================================
-
-# 6. 激光雷达导航（AMCL）
-navigation_lidar() {
-    printf "${Info}\n"
-    printf "${Info} 激光雷达导航 (AMCL)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 激光雷达已上电并正确连接 (/dev/ydlidar)。\n"
-    printf "${Tip}   B. 已有建图阶段保存的地图文件 (test_map.yaml / test_map.pgm)。\n"
-    printf "${Tip} ${Yellow_font_prefix}导航操作说明:${Font_color_suffix}\n"
-    printf "${Tip}   1. 导航启动后，在 VNC 的 RVIZ 中点击 '2D Pose Estimate' 并在地图上手动初始化机器人位置。\n"
-    printf "${Tip}   2. 初始化成功后，点击 '2D Nav Goal' 并在地图上指定导航目标点，机器人将自主导航。\n"
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_lidar_rviz.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_lidar_rviz.launch \
-        camera_type_tel:=${CAMERATYPE} \
-        lidar_type_tel:=${LIDARTYPE}
-}
-
-# 7. 深度摄像头导航（RTAB-Map）
-navigation_camera_rtabmap() {
-    printf "${Info}\n"
-    printf "${Info} 深度摄像头导航 (RTAB-Map)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
-    printf "${Tip}   B. 已有建图阶段保存的地图数据库 (/data/local/release/rtabmap.db)。\n"
-    printf "${Tip}   C. 请将机器人放置在建图时的起始点位置。\n"
-    printf "${Tip} ${Yellow_font_prefix}导航操作说明:${Font_color_suffix}\n"
-    printf "${Tip}   导航启动后，在 VNC 的 RVIZ 中点击 '2D Nav Goal' 并在地图上指定导航目标点。\n"
-    printf "${Tip}   如需加载 3D 地图，点击 RVIZ 中 Display -> Rtabmap cloud -> Download map。\n"
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_nav.launch camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_rtabmap spark_rtabmap_nav.launch \
-        camera_type_tel:=${CAMERATYPE}
-}
-
-# 8. 深度摄像头导航（2D AMCL）
-navigation_camera_2d() {
-    printf "${Info}\n"
-    printf "${Info} 深度摄像头导航 (2D AMCL)\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 深度摄像头 (%s) 已正确连接（不可通过 USB 拓展坞）。\n" "$CAMERATYPE"
-    printf "${Tip}   B. 已有深度摄像头 2D 建图阶段保存的地图文件 (test_map.yaml / test_map.pgm)。\n"
-    printf "${Tip}   C. 深度摄像头将模拟激光雷达数据，配合 AMCL 进行 2D 导航。\n"
-    printf "${Tip} ${Yellow_font_prefix}导航操作说明:${Font_color_suffix}\n"
-    printf "${Tip}   1. 导航启动后，在 VNC 的 RVIZ 中点击 '2D Pose Estimate' 并在地图上手动初始化机器人位置。\n"
-    printf "${Tip}   2. 初始化成功后，点击 '2D Nav Goal' 并在地图上指定导航目标点，机器人将自主导航。\n"
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_rviz.launch camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_navigation amcl_demo_rviz.launch \
-        camera_type_tel:=${CAMERATYPE}
-}
-
-# =================================================
-# 应用功能
-# =================================================
-
-# 9. 深度跟随
-depth_follow() {
-    printf "${Info}\n"
-    printf "${Info} 深度跟随\n"
-    printf "${Separator}\n"
-    printf "${Tip} 请确认以下事项后再继续：\n"
-    printf "${Tip}   A. 深度摄像头 (%s) 已正确连接。\n" "$CAMERATYPE"
-    printf "${Tip}   B. ${Red_font_prefix}摄像头不可通过 USB 拓展坞连接开发板，否则无法正常使用！${Font_color_suffix}\n"
-    printf "${Tip}   C. 启动后，请站在机器人正前方约 1 米处，机器人将自动跟随您移动。\n"
-    printf "${Separator}\n"
-    press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
-    print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_follower bringup.launch camera_type_tel:=${CAMERATYPE}"
-    DISPLAY=${DISPLAY_NUM} run roslaunch spark_follower bringup.launch \
-        camera_type_tel:=${CAMERATYPE}
-}
-
-# =================================================
-# 建图子菜单
-# =================================================
-
-show_map_menu() {
-    clear
-    printf "\n"
-    printf "${Separator}\n"
-    printf "  M-Robots — 建图功能选择\n"
-    printf "${Separator}\n"
-    printf "\n"
-    printf "  ${Green_font_prefix}激光雷达建图${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  41.${Font_color_suffix} GMapping\n"
-    printf "  ${Green_font_prefix}  42.${Font_color_suffix} Hector SLAM\n"
-    printf "  ${Green_font_prefix}  43.${Font_color_suffix} Karto SLAM\n"
-    printf "\n"
-    printf "  ${Green_font_prefix}深度摄像头建图${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  51.${Font_color_suffix} RTAB-Map  (3D 建图，推荐)\n"
-    printf "  ${Green_font_prefix}  52.${Font_color_suffix} GMapping  (2D，摄像头模拟激光)\n"
-    printf "  ${Green_font_prefix}  53.${Font_color_suffix} Hector SLAM (2D，摄像头模拟激光)\n"
-    printf "  ${Green_font_prefix}  54.${Font_color_suffix} Karto SLAM  (2D，摄像头模拟激光)\n"
-    printf "\n"
-    printf "${Separator}\n"
-    printf "  ${Green_font_prefix}   0.${Font_color_suffix} 返回主菜单\n"
-    printf "${Separator}\n"
-    printf "\n"
-    printf "请输入数字: "
-    read map_num
-    case "$map_num" in
-        41) build_map_lidar_gmapping ;;
-        42) build_map_lidar_hector ;;
-        43) build_map_lidar_karto ;;
-        51) build_map_camera_rtabmap ;;
-        52) build_map_camera_gmapping ;;
-        53) build_map_camera_hector ;;
-        54) build_map_camera_karto ;;
-        0)  return ;;
-        *)  printf "${Error} 请输入正确的数字\n" ;;
-    esac
-    printf "\n"
-    printf "${Info} 功能已结束，按回车键返回主菜单...\n"
-    read _dummy
-}
-
-# =================================================
-# 导航子菜单
-# =================================================
-
-show_nav_menu() {
-    clear
-    printf "\n"
-    printf "${Separator}\n"
-    printf "  M-Robots — 导航功能选择\n"
-    printf "${Separator}\n"
-    printf "\n"
-    printf "  ${Green_font_prefix}激光雷达导航${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  61.${Font_color_suffix} AMCL 导航 (需激光雷达建图地图)\n"
-    printf "\n"
-    printf "  ${Green_font_prefix}深度摄像头导航${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  71.${Font_color_suffix} RTAB-Map 导航 (需 rtabmap.db 地图)\n"
-    printf "  ${Green_font_prefix}  72.${Font_color_suffix} 2D AMCL 导航  (需深度摄像头 2D 建图地图)\n"
-    printf "\n"
-    printf "${Separator}\n"
-    printf "  ${Green_font_prefix}   0.${Font_color_suffix} 返回主菜单\n"
-    printf "${Separator}\n"
-    printf "\n"
-    printf "请输入数字: "
-    read nav_num
-    case "$nav_num" in
-        61) navigation_lidar ;;
-        71) navigation_camera_rtabmap ;;
-        72) navigation_camera_2d ;;
-        0)  return ;;
-        *)  printf "${Error} 请输入正确的数字\n" ;;
-    esac
-    printf "\n"
-    printf "${Info} 功能已结束，按回车键返回主菜单...\n"
-    read _dummy
-}
-
-# =================================================
 # 主菜单
 # =================================================
 
@@ -649,24 +522,17 @@ show_menu() {
     printf "\n"
     printf "${Separator}\n"
     printf "  M-Robots (OpenHarmony) 一键启动脚本 ${Red_font_prefix}[v%s]${Font_color_suffix}\n" "$sh_ver"
-    printf "  基于 spark_noetic 移植 | 请根据功能说明选择序号\n"
-    printf "${Separator}\n"
     printf "\n"
-    printf "  ${Green_font_prefix}基础功能${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  1.${Font_color_suffix} 让机器人动起来 (键盘控制 + RVIZ)\n"
-    printf "  ${Green_font_prefix}  2.${Font_color_suffix} 手眼标定\n"
-    printf "  ${Green_font_prefix}  3.${Font_color_suffix} 物品抓取\n"
+    printf "  请根据功能说明选择相应的序号。\n"
     printf "\n"
-    printf "  ${Green_font_prefix}建图功能${Font_color_suffix}  ${Blue_font_prefix}(进入子菜单选择建图方式)${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  4.${Font_color_suffix} 激光雷达建图  [GMapping / Hector / Karto]\n"
-    printf "  ${Green_font_prefix}  5.${Font_color_suffix} 深度摄像头建图 [RTAB-Map / GMapping / Hector / Karto]\n"
-    printf "\n"
-    printf "  ${Green_font_prefix}导航功能${Font_color_suffix}  ${Blue_font_prefix}(进入子菜单选择导航方式)${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  6.${Font_color_suffix} 激光雷达导航  [AMCL]\n"
-    printf "  ${Green_font_prefix}  7.${Font_color_suffix} 深度摄像头导航 [RTAB-Map / 2D AMCL]\n"
-    printf "\n"
-    printf "  ${Green_font_prefix}应用功能${Font_color_suffix}\n"
-    printf "  ${Green_font_prefix}  8.${Font_color_suffix} 深度跟随\n"
+    printf "  ${Green_font_prefix}  1.${Font_color_suffix} 让机器人动起来\n"
+    printf "  ${Green_font_prefix}  2.${Font_color_suffix} 让SPARK跟着你走\n"
+    printf "  ${Green_font_prefix}  3.${Font_color_suffix} 让SPARK使用激光雷达绘制地图\n"
+    printf "  ${Green_font_prefix}  4.${Font_color_suffix} 让SPARK使用深度摄像头绘制地图\n"
+    printf "  ${Green_font_prefix}  5.${Font_color_suffix} 让SPARK使用激光雷达进行导航\n"
+    printf "  ${Green_font_prefix}  6.${Font_color_suffix} 让SPARK使用深度摄像头进行导航\n"
+    printf "  ${Green_font_prefix}  7.${Font_color_suffix} 机械臂与摄像头标定\n"
+    printf "  ${Green_font_prefix}  8.${Font_color_suffix} 让SPARK通过机械臂进行视觉抓取\n"
     printf "\n"
     printf "${Separator}\n"
     printf "  ${Green_font_prefix}  0.${Font_color_suffix} 退出脚本（将同时关闭 Xvfb 和 X11VNC）\n"
@@ -690,37 +556,15 @@ while true; do
     printf "请输入数字 [0-8]: "
     read num
     case "$num" in
-        1)
-            let_robot_go
-            ;;
-        2)
-            hand_eye_calibration
-            ;;
-        3)
-            object_grasping
-            ;;
-        4)
-            show_map_menu
-            continue
-            ;;
-        5)
-            show_map_menu
-            continue
-            ;;
-        6)
-            show_nav_menu
-            continue
-            ;;
-        7)
-            show_nav_menu
-            continue
-            ;;
-        8)
-            depth_follow
-            ;;
-        0)
-            cleanup
-            ;;
+        1) let_robot_go ;;
+        2) depth_follow ;;
+        3) build_map_lidar ;;
+        4) build_map_camera ;;
+        5) navigation_lidar ;;
+        6) navigation_camera ;;
+        7) hand_eye_calibration ;;
+        8) object_grasping ;;
+        0) cleanup ;;
         *)
             printf "${Error} 请输入正确的数字 [0-8]\n"
             ;;
