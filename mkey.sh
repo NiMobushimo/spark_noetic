@@ -73,12 +73,47 @@ trap cleanup INT TERM
 
 # 检查并挂载文件系统（开发板首次启动需要）
 check_mount() {
+    printf "${Separator}\n"
+    printf "${Info} 正在检查文件系统挂载状态...\n"
+
+    # 1. 检查根目录是否可写
     if ! touch /data/local/release/.write_test > /dev/null 2>&1; then
-        printf "${Info} 检测到文件系统为只读，正在重新挂载...\n"
+        printf "${Info} 检测到文件系统为只读，正在重新挂载 /...\n"
         mount -o remount,rw /
+        if ! touch /data/local/release/.write_test > /dev/null 2>&1; then
+            printf "${Error} 根目录挂载失败，请手动执行: mount -o remount,rw /\n"
+        else
+            rm -f /data/local/release/.write_test
+            printf "${Info} 根目录已重新挂载为可写。\n"
+        fi
     else
         rm -f /data/local/release/.write_test
+        printf "${Info} 根目录已是可写状态。\n"
     fi
+
+    # 2. 确保 /tmp 可写（Xvfb 需要在 /tmp 创建锁文件）
+    if ! touch /tmp/.write_test > /dev/null 2>&1; then
+        printf "${Info} /tmp 为只读，正在重新挂载 /tmp...\n"
+        mount -o remount,rw /tmp
+        if ! touch /tmp/.write_test > /dev/null 2>&1; then
+            printf "${Warn} /tmp 挂载失败，尝试绑定挂载 tmpfs...\n"
+            mount -t tmpfs tmpfs /tmp
+        fi
+        rm -f /tmp/.write_test
+    else
+        rm -f /tmp/.write_test
+        printf "${Info} /tmp 已是可写状态。\n"
+    fi
+
+    # 3. 清理 /tmp 下残留的 Xvfb 锁文件（防止上次异常退出残留）
+    if ls /tmp/.tX*-lock > /dev/null 2>&1; then
+        printf "${Warn} 检测到 /tmp 中有残留的 Xvfb 锁文件，正在清理...\n"
+        rm -f /tmp/.tX*-lock
+        rm -rf /tmp/.X*-unix
+        printf "${Info} 残留锁文件已清理。\n"
+    fi
+
+    printf "${Separator}\n"
 }
 
 # 获取本机 IP（使用 busybox ip/ifconfig + cut/grep）
@@ -127,8 +162,13 @@ start_virtual_screen() {
         # startxvfb 是封装脚本，内部用 run Xvfb 启动。
         # 不保存 PID，cleanup 时用 killall 按进程名杀死。
         run startxvfb &
-        sleep 2
-        printf "${Info} Xvfb 已启动。\n"
+        sleep 3
+        # 验证 Xvfb 是否真实启动成功
+        if run busybox pgrep -x "Xvfb" > /dev/null 2>&1; then
+            printf "${Info} Xvfb 已成功启动。\n"
+        else
+            printf "${Error} Xvfb 启动失败！请检查 /tmp 是否可写，或手动执行: run startxvfb\n"
+        fi
     fi
 
     # 检查 x11vnc 是否已在运行（pgrep 属于 busybox）
