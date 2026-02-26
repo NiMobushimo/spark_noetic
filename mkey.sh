@@ -394,18 +394,7 @@ build_map_camera() {
 # 5. 让SPARK使用激光雷达进行导航
 navigation_lidar() {
     printf "${Info}\n"
-    printf "${Info} 让SPARK使用激光雷达进行导航\n"
-    printf "${Info}\n"
-    printf "${Info} 请选择导航的方式：\n"
-    printf "  ${Green_font_prefix}1.${Font_color_suffix} AMCL 导航\n"
-    printf "  ${Green_font_prefix}2.${Font_color_suffix} 退出请输入：Ctrl + c\n"
-    printf "\n"
-    printf "请输入数字 [1]: "
-    read navnum
-    case "$navnum" in
-        1) NAVTYPE="amcl" ;;
-        *) printf "${Error} 错误，默认使用 AMCL\n" ; NAVTYPE="amcl" ;;
-    esac
+    printf "${Info} 让SPARK使用激光雷达进行导航 (AMCL)\n"
     printf "${Info}\n"
     printf "${Info} 请确定：\n"
     printf "${Info}       A. 激光雷达已上电并正确连接 (/dev/ydlidar)。\n"
