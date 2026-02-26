@@ -29,6 +29,10 @@ LIDARTYPE="ydlidar_g6"
 ARMTYPE="uarm"
 DISPLAY_NUM=":0"
 
+# rosdep 在 OpenHarmony 上无法自动识别系统，强制指定为 Ubuntu 20.04
+# 否则用到 smach_ros 等包的节点会抛出 OsNotDetected 错误
+export ROS_OS_OVERRIDE="ubuntu:20.04"
+
 # =================================================
 # 工具函数
 # =================================================
@@ -492,14 +496,14 @@ object_grasping() {
     printf "${Info}       C. 已准备好目标物品。\n"
     printf "${Info} 退出请输入：Ctrl + c\n"
     printf "${Info}\n"
+    printf "${Info} 程序启动后，请在 ${Yellow_font_prefix}新终端${Font_color_suffix} 中执行以下命令以开始抓取:\n"
+    printf "${Info} ${Green_font_prefix}run rosservice call /s_carry_object 'type: 1'${Font_color_suffix}\n"
+    printf "${Info}\n"
     press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
     print_command "DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_object_only_cv3.launch camera_type_tel:=${CAMERATYPE} lidar_type_tel:=${LIDARTYPE}"
     DISPLAY=${DISPLAY_NUM} run roslaunch spark_carry_object spark_carry_object_only_cv3.launch \
         camera_type_tel:=${CAMERATYPE} \
         lidar_type_tel:=${LIDARTYPE}
-    printf "\n"
-    printf "${Info} 程序启动后，请在 ${Yellow_font_prefix}新终端${Font_color_suffix} 中执行以下命令以开始抓取:\n"
-    printf "${Info} ${Green_font_prefix}run rosservice call /s_carry_object 'type: 1'${Font_color_suffix}\n"
 }
 
 # =================================================
