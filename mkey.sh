@@ -7,7 +7,7 @@
 #=================================================
 
 # --- 脚本版本 ---
-sh_ver="1.1"
+sh_ver="1.2"
 
 # --- 颜色定义 ---
 Green_font_prefix="\033[32m"
@@ -506,6 +506,40 @@ object_grasping() {
         lidar_type_tel:=${LIDARTYPE}
 }
 
+# 9. 深度学习目标检测
+deep_learning() {
+    printf "${Info}\n"
+    printf "${Info} 让SPARK使用深度学习识别目标\n"
+    printf "${Info}\n"
+    printf "${Info} 请选择深度学习的方式：\n"
+    printf "${Info}   ${Green_font_prefix}1.${Font_color_suffix} YOLOv3\n"
+    printf "${Info}   ${Blue_font_prefix}     更多深度学习方式敬请期待...${Font_color_suffix}\n"
+    printf "${Info}   ${Green_font_prefix}4.${Font_color_suffix} 退出请输入：Ctrl + c\n"
+    printf "\n"
+    printf "请输入数字 [1]: "
+    read _dl_choice
+    case "$_dl_choice" in
+        1)
+            printf "${Info}\n"
+            printf "${Info} 让SPARK使用深度学习识别目标 (YOLOv3)\n"
+            printf "${Info}\n"
+            printf "${Info} 请确定：\n"
+            printf "${Info}       A. 深度摄像头 (%s) 已正确连接。\n" "$CAMERATYPE"
+            printf "${Info}       B. ${Red_font_prefix}摄像头不可通过 USB 拓展坞连接开发板，否则无法正常使用！${Font_color_suffix}\n"
+            printf "${Info}       C. YOLOv3 模型权重文件已就绪。\n"
+            printf "${Info} 退出请输入：Ctrl + c\n"
+            printf "${Info}\n"
+            press_enter "按回车键（Enter）开始（RVIZ 将在 VNC 窗口中显示）: "
+            print_command "DISPLAY=${DISPLAY_NUM} run roslaunch darknet_ros deeplearn_darknet_yoloV3.launch camera_type_tel:=${CAMERATYPE}"
+            DISPLAY=${DISPLAY_NUM} run roslaunch darknet_ros deeplearn_darknet_yoloV3.launch \
+                camera_type_tel:=${CAMERATYPE}
+            ;;
+        *)
+            printf "${Error} 请输入正确的数字 [1]\n"
+            ;;
+    esac
+}
+
 # =================================================
 # 主菜单
 # =================================================
@@ -526,6 +560,7 @@ show_menu() {
     printf "  ${Green_font_prefix}  6.${Font_color_suffix} 让SPARK使用深度摄像头进行导航\n"
     printf "  ${Green_font_prefix}  7.${Font_color_suffix} 机械臂与摄像头标定\n"
     printf "  ${Green_font_prefix}  8.${Font_color_suffix} 让SPARK通过机械臂进行视觉抓取\n"
+    printf "  ${Green_font_prefix}  9.${Font_color_suffix} 让SPARK使用深度学习识别目标\n"
     printf "\n"
     printf "${Separator}\n"
     printf "  ${Green_font_prefix}  0.${Font_color_suffix} 退出脚本（将同时关闭 Xvfb 和 X11VNC）\n"
@@ -546,7 +581,7 @@ start_virtual_screen
 # 第三步：进入主循环
 while true; do
     show_menu
-    printf "请输入数字 [0-8]: "
+    printf "请输入数字 [0-9]: "
     read num
     case "$num" in
         1) let_robot_go ;;
@@ -557,9 +592,10 @@ while true; do
         6) navigation_camera ;;
         7) hand_eye_calibration ;;
         8) object_grasping ;;
+        9) deep_learning ;;
         0) cleanup ;;
         *)
-            printf "${Error} 请输入正确的数字 [0-8]\n"
+            printf "${Error} 请输入正确的数字 [0-9]\n"
             ;;
     esac
     printf "\n"
