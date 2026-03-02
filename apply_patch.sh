@@ -23,7 +23,18 @@ Separator="———————————————————————
 
 # --- 路径定义 ---
 # 补丁目录（与本脚本同级的 M-Robots_patch 文件夹）
-PATCH_DIR="$(cd "$(dirname "$0")" && pwd)/M-Robots_patch"
+# 补丁目录自动探测
+# 1. 优先检查脚本所在目录是否就是补丁内容目录（包含 cfg/include/lib/share）
+# 2. 其次检查脚本所在目录下是否存在 M-Robots_patch 子目录
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -d "$SCRIPT_DIR/cfg" ] && [ -d "$SCRIPT_DIR/share" ]; then
+    PATCH_DIR="$SCRIPT_DIR"
+elif [ -d "$SCRIPT_DIR/M-Robots_patch" ]; then
+    PATCH_DIR="$SCRIPT_DIR/M-Robots_patch"
+else
+    # 默认回退到原逻辑，但在 check_env 中会报错
+    PATCH_DIR="$SCRIPT_DIR/M-Robots_patch"
+fi
 # 开发板 ROS 根目录
 RELEASE_DIR="/data/local/release"
 # 开发板服务配置目录
@@ -85,9 +96,10 @@ check_env() {
     printf "${Separator}\n"
 
     # 检查补丁目录
-    if [ ! -d "$PATCH_DIR" ]; then
-        printf "${Error} 未找到补丁目录: %s\n" "$PATCH_DIR"
-        printf "${Error} 请确保 M-Robots_patch 文件夹与本脚本在同一目录下！\n"
+    # 检查补丁目录完整性
+    if [ ! -d "$PATCH_DIR/cfg" ] || [ ! -d "$PATCH_DIR/share" ]; then
+        printf "${Error} 补丁目录结构不完整或未找到: %s\n" "$PATCH_DIR"
+        printf "${Error} 请确保脚本所在目录包含 cfg/share 等文件夹，或存在 M-Robots_patch 子目录！\n"
         exit 1
     fi
     printf "${Info} 补丁目录: ${Green_font_prefix}%s${Font_color_suffix}\n" "$PATCH_DIR"
